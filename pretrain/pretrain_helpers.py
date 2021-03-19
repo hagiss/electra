@@ -129,10 +129,12 @@ def get_vocab(config: configure_pretraining.PretrainingConfig):
 
 def get_candidates_mask(config: configure_pretraining.PretrainingConfig,
                         inputs: pretrain_data.Inputs,
-                        disallow_from_mask=None):
+                        disallow_from_mask=None, already_masked=None):
   """Returns a mask tensor of positions in the input that can be masked out."""
   vocab = get_vocab(config)
   ignore_ids = [vocab["[SEP]"], vocab["[CLS]"], vocab["[MASK]"]]
+  if already_masked is not None:
+    ignore_ids += already_masked
   candidates_mask = tf.ones_like(inputs.input_ids, tf.bool)
   for ignore_id in ignore_ids:
     candidates_mask &= tf.not_equal(inputs.input_ids, ignore_id)
@@ -167,7 +169,7 @@ def mask(config: configure_pretraining.PretrainingConfig,
 
   # Find indices where masking out a token is allowed
   vocab = get_vocab(config)
-  candidates_mask = get_candidates_mask(config, inputs, disallow_from_mask)
+  candidates_mask = get_candidates_mask(config, inputs, disallow_from_mask, already_masked)
 
   # Set the number of tokens to mask out per example
   num_tokens = tf.cast(tf.reduce_sum(inputs.input_mask, -1), tf.float32)
@@ -211,6 +213,7 @@ def mask(config: configure_pretraining.PretrainingConfig,
       masked_lm_ids=masked_lm_ids,
       masked_lm_weights=masked_lm_weights
   )
+
 
 
 def unmask(inputs: pretrain_data.Inputs):
