@@ -23,6 +23,7 @@ import argparse
 import collections
 import json
 
+import tensorflow as tf2
 import tensorflow.compat.v1 as tf
 
 import configure_pretraining
@@ -57,28 +58,27 @@ class PretrainingModel(object):
             config, unmasked_inputs, config.mask_prob, already_masked=masked_inputs.masked_lm_ids
         )
 
-
         online = modeling_pred.BertModel(
-                config=self._bert_config,
-                is_training=is_training,
-                input_ids=masked_inputs.input_ids,
-                input_mask=masked_inputs.input_mask
-            )
+            config=self._bert_config,
+            is_training=is_training,
+            input_ids=masked_inputs.input_ids,
+            input_mask=masked_inputs.input_mask
+        )
         target = modeling_pred.BertModel(
-                config=self._bert_config,
-                is_training=is_training,
-                input_ids=masked_inputs2.input_ids,
-                input_mask=masked_inputs2.input_mask
-            )
+            config=self._bert_config,
+            is_training=is_training,
+            input_ids=masked_inputs2.input_ids,
+            input_mask=masked_inputs2.input_mask
+        )
         # mlm_output = self._get_masked_lm_output(masked_inputs, generator)
         loss1 = get_BYOL_output(self._bert_config,
-                                    online.get_sequence_output(),
-                                    target.get_sequence_output(),
-                                    masked_inputs.masked_lm_positions)
+                                online.get_sequence_output(),
+                                target.get_sequence_output(),
+                                masked_inputs.masked_lm_positions)
         loss2 = get_BYOL_output(self._bert_config,
-                                    target.get_sequence_output(),
-                                    online.get_sequence_output(),
-                                    masked_inputs2.masked_lm_positions)
+                                target.get_sequence_output(),
+                                online.get_sequence_output(),
+                                masked_inputs2.masked_lm_positions)
         # self.mlm_output = mlm_output
         # self.total_loss = config.gen_weight * (
         #     cloze_output.loss if config.two_tower_generator else mlm_output.loss)
@@ -165,13 +165,15 @@ def gather_indexes(sequence_tensor, positions):
 
 
 def get_BYOL_output(bert_config, online_tensor, target_tensor, online_positions):
+    print(tf.shape(online_tensor))
+
     first_online_tensor = tf.squeeze(online_tensor[:, 0:1, :], axis=1)
     first_target_tensor = tf.squeeze(target_tensor[:, 0:1, :], axis=1)
     online_tensor = gather_indexes(online_tensor, online_positions)
     target_tensor = gather_indexes(target_tensor, online_positions)
 
     with tf.variable_scope("BYOL_loss"):
-        with tf.variable_scope("BYOL_token_loss"):
+        with tf.variable_scope("BYOL_token_loss", reuse=tf.AUTO_REUSE):
             # non-linear transformation for projection
             mlp = tf.layers.dense(
                 online_tensor,
@@ -183,22 +185,22 @@ def get_BYOL_output(bert_config, online_tensor, target_tensor, online_positions)
                 256,
                 kernel_initializer=modeling_pred.create_initializer(bert_config.initializer_range))
 
-        token_loss = tf.reduce_sum(prediction, target_tensor, axis=2)
-        token_loss = token_loss / (tf.norm(prediction, axis=2) * tf.norm(target_tensor, axis=2))
+        token_loss = tf.reduce_sum(prediction * target_tensor, axis=1)
+        token_loss = token_loss / (tf.norm(prediction, axis=1) * tf.norm(target_tensor, axis=1))
         token_loss = tf.reduce_mean(2 - 2 * token_loss)
 
-        with tf.variable_scope("BYOL_first_loss"):
+        with tf.variable_scope("BYOL_first_loss", reuse=tf.AUTO_REUSE):
             mlp_pred = tf.layers.dense(
                 first_online_tensor,
                 4096,
                 kernel_initializer=modeling_pred.create_initializer(bert_config.initializer_range))
             mlp_pred = tf.nn.relu(modeling_pred.layer_norm(mlp_pred))
-            pred_first = tf.layer.dense(
+            pred_first = tf.layers.dense(
                 mlp_pred,
                 256,
                 kernel_initializer=modeling_pred.create_initializer(bert_config.initializer_range))
 
-        first_loss = tf.reduce_sum(pred_first, first_target_tensor, axis=1)
+        first_loss = tf.reduce_sum(pred_first * first_target_tensor, axis=1)
         first_loss = first_loss / (tf.norm(pred_first, axis=1) * tf.norm(first_target_tensor, axis=1))
         first_loss = tf.reduce_mean(2 - 2 * first_loss)
 
@@ -274,6 +276,7 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
 
     def model_fn(features, labels, mode, params):
         """Build the model for training."""
+
         model = PretrainingModel(config, features,
                                  mode == tf.estimator.ModeKeys.TRAIN)
         utils.log("Model is built!")
@@ -319,6 +322,8 @@ def train_or_eval(config: configure_pretraining.PretrainingConfig):
     utils.heading("Config:")
     utils.log_config(config)
 
+    train_distribution_strategy = tf.distribute.MirroredStrategy(devices=None)
+    eval_distribution_strategy = tf.distribute.MirroredStrategy(devices=None)
     is_per_host = tf.estimator.tpu.InputPipelineConfig.PER_HOST_V2
     tpu_cluster_resolver = None
     if config.use_tpu and config.tpu_name:
@@ -334,14 +339,20 @@ def train_or_eval(config: configure_pretraining.PretrainingConfig):
         model_dir=config.model_dir,
         save_checkpoints_steps=config.save_checkpoints_steps,
         keep_checkpoint_max=config.keep_checkpoint_max,
+        train_distribute=train_distribution_strategy,
+        eval_distribute=eval_distribution_strategy,
         tpu_config=tpu_config)
+
     model_fn = model_fn_builder(config=config)
+
     estimator = tf.estimator.tpu.TPUEstimator(
         use_tpu=config.use_tpu,
         model_fn=model_fn,
         config=run_config,
         train_batch_size=config.train_batch_size,
         eval_batch_size=config.eval_batch_size)
+    # estimator = tf.estimator.Estimator(
+    #     model_fn=tf2.estimator.replicate_model_fn(model_fn))
 
     if config.do_train:
         utils.heading("Running training")
@@ -377,11 +388,13 @@ def main():
     parser.add_argument("--hparams", default="{}",
                         help="JSON dict of model hyperparameters.")
     args = parser.parse_args()
+    tf.disable_eager_execution()
     if args.hparams.endswith(".json"):
         hparams = utils.load_json(args.hparams)
     else:
         hparams = json.loads(args.hparams)
     tf.logging.set_verbosity(tf.logging.ERROR)
+
     train_or_eval(configure_pretraining.PretrainingConfig(
         args.model_name, args.data_dir, **hparams))
 

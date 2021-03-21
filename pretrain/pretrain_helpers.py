@@ -133,9 +133,8 @@ def get_candidates_mask(config: configure_pretraining.PretrainingConfig,
   """Returns a mask tensor of positions in the input that can be masked out."""
   vocab = get_vocab(config)
   ignore_ids = [vocab["[SEP]"], vocab["[CLS]"], vocab["[MASK]"]]
-  if already_masked is not None:
-    ignore_ids += already_masked
   candidates_mask = tf.ones_like(inputs.input_ids, tf.bool)
+  print(candidates_mask)
   for ignore_id in ignore_ids:
     candidates_mask &= tf.not_equal(inputs.input_ids, ignore_id)
   candidates_mask &= tf.cast(inputs.input_mask, tf.bool)
@@ -176,8 +175,8 @@ def mask(config: configure_pretraining.PretrainingConfig,
   num_to_predict = tf.maximum(1, tf.minimum(
       N, tf.cast(tf.round(num_tokens * mask_prob), tf.int32)))
   masked_lm_weights = tf.cast(tf.sequence_mask(num_to_predict, N), tf.float32)
-  if already_masked is not None:
-    masked_lm_weights *= (1 - already_masked)
+  # if already_masked is not None:
+  #   masked_lm_weights *= (1 - already_masked)
 
   # Get a probability of masking each position in the sequence
   candidate_mask_float = tf.cast(candidates_mask, tf.float32)

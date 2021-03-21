@@ -25,8 +25,7 @@ import math
 import re
 import numpy as np
 import six
-import tensorflow as tf
-
+import tensorflow.compat.v1 as tf
 
 class BertConfig(object):
   """Configuration for `BertModel`."""
@@ -232,7 +231,8 @@ class BertModel(object):
             kernel_initializer=create_initializer(config.initializer_range))
 
   def get_pooled_output(self):
-    return self.pooled_output
+    # return self.pooled_output
+
 
   def get_sequence_output(self):
     """Gets final hidden layer of encoder.
@@ -361,8 +361,10 @@ def dropout(input_tensor, dropout_prob):
 
 def layer_norm(input_tensor, name=None):
   """Run layer normalization on the last dimension of the tensor."""
-  return tf.contrib.layers.layer_norm(
-      inputs=input_tensor, begin_norm_axis=-1, begin_params_axis=-1, scope=name)
+  layer = tf.keras.layers.LayerNormalization(axis=-1)
+  return layer(input_tensor)
+  # return tf.keras.layers.LayerNormalization(
+  #     inputs=input_tensor, begin_norm_axis=-1, begin_params_axis=-1, scope=name)
 
 
 def layer_norm_and_dropout(input_tensor, dropout_prob, name=None):

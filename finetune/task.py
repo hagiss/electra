@@ -25,7 +25,7 @@ from typing import List, Tuple
 import configure_finetuning
 from finetune import feature_spec
 from finetune import scorer
-from model import modeling
+import modeling_pred
 
 
 class Example(object):
@@ -66,7 +66,7 @@ class Task(object):
 
   @abc.abstractmethod
   def get_prediction_module(
-      self, bert_model: modeling.BertModel, features: dict, is_training: bool,
+      self, bert_model: modeling_pred.BertModel, features: dict, is_training: bool,
       percent_done: float) -> Tuple:
     pass
 
