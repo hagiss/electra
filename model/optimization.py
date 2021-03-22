@@ -184,9 +184,14 @@ def _get_layer_lrs(learning_rate, layer_decay, n_layers):
       "/embeddings/": 0,
       "/embeddings_project/": 0,
       "task_specific/": n_layers + 2,
+      "/encoder/projection/": 0,
+      "/pooler/": 0
   })
+  print("n_layers")
+  print(n_layers)
   for layer in range(n_layers):
     key_to_depths["encoder/layer_" + str(layer) + "/"] = layer + 1
+  # key_to_depths["encoder/projection/"]
   return {
       key: learning_rate * (layer_decay ** (n_layers + 2 - depth))
       for key, depth in key_to_depths.items()

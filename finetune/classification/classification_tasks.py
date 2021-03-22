@@ -271,6 +271,8 @@ class ClassificationTask(SingleOutputTask):
 
     if is_training:
       reprs = tf.nn.dropout(reprs, keep_prob=0.9)
+    # else:
+    #   print(reprs)
 
     logits = tf.layers.dense(reprs, num_labels)
     log_probs = tf.nn.log_softmax(logits, axis=-1)

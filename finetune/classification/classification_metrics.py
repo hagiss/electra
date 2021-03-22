@@ -22,7 +22,7 @@ from __future__ import print_function
 import abc
 import numpy as np
 import scipy
-import sklearn
+import sklearn.metrics
 
 from finetune import scorer
 

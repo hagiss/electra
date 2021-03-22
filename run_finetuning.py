@@ -28,7 +28,7 @@ import tensorflow.compat.v1 as tf
 import configure_finetuning
 from finetune import preprocessing
 from finetune import task_builder
-from model import modeling
+import modeling_pred
 from model import optimization
 from util import training_utils
 from util import utils
@@ -48,14 +48,12 @@ class FinetuningModel(object):
       bert_config.intermediate_size = 144 * 4
       bert_config.num_attention_heads = 4
     assert config.max_seq_length <= bert_config.max_position_embeddings
-    bert_model = modeling.BertModel(
-        bert_config=bert_config,
-        is_training=is_training,
+    bert_model = modeling_pred.BertModel(
+        config=bert_config,
+        is_training=False,
         input_ids=features["input_ids"],
         input_mask=features["input_mask"],
-        token_type_ids=features["segment_ids"],
-        use_one_hot_embeddings=config.use_tpu,
-        embedding_size=config.embedding_size)
+        scope=bert_config.scope)
     percent_done = (tf.cast(tf.train.get_or_create_global_step(), tf.float32) /
                     tf.cast(num_train_steps, tf.float32))
 
@@ -92,7 +90,7 @@ def model_fn_builder(config: configure_finetuning.FinetuningConfig, tasks,
     tvars = tf.trainable_variables()
     scaffold_fn = None
     if init_checkpoint:
-      assignment_map, _ = modeling.get_assignment_map_from_checkpoint(
+      assignment_map, _ = modeling_pred.get_assignment_map_from_checkpoint(
           tvars, init_checkpoint)
       if config.use_tpu:
         def tpu_scaffold():

@@ -41,7 +41,8 @@ class BertConfig(object):
                attention_probs_dropout_prob=0.1,
                max_position_embeddings=512,
                type_vocab_size=16,
-               initializer_range=0.02):
+               initializer_range=0.02,
+               scope="online"):
     """Constructs BertConfig.
 
     Args:
@@ -77,6 +78,7 @@ class BertConfig(object):
     self.max_position_embeddings = max_position_embeddings
     self.type_vocab_size = type_vocab_size
     self.initializer_range = initializer_range
+    self.scope = scope
 
   @classmethod
   def from_dict(cls, json_object):
@@ -153,6 +155,7 @@ class BertModel(object):
         is invalid.
     """
     config = copy.deepcopy(config)
+    self.is_training = is_training
     if not is_training:
       config.hidden_dropout_prob = 0.0
       config.attention_probs_dropout_prob = 0.0
@@ -201,7 +204,7 @@ class BertModel(object):
 
         # Run the stacked transformer.
         # `sequence_output` shape = [batch_size, seq_length, hidden_size].
-        self.all_encoder_layers = transformer_model(
+        (self.sequence_output, self.encoder_outputs_without_proj) = transformer_model(
             input_tensor=self.embedding_output,
             attention_mask=attention_mask,
             hidden_size=config.hidden_size,
@@ -212,9 +215,9 @@ class BertModel(object):
             hidden_dropout_prob=config.hidden_dropout_prob,
             attention_probs_dropout_prob=config.attention_probs_dropout_prob,
             initializer_range=config.initializer_range,
-            do_return_all_layers=True)
+            do_return_all_layers=False)
 
-      self.sequence_output = self.all_encoder_layers[-1]
+      # self.sequence_output = self.all_encoder_layers[-1]
       # The "pooler" converts the encoded sequence tensor of shape
       # [batch_size, seq_length, hidden_size] to a tensor of shape
       # [batch_size, hidden_size]. This is necessary for segment-level
@@ -229,10 +232,16 @@ class BertModel(object):
             config.hidden_size,
             activation=tf.tanh,
             kernel_initializer=create_initializer(config.initializer_range))
+    self.variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=scope)
 
   def get_pooled_output(self):
     # return self.pooled_output
-
+    if self.is_training:
+      return tf.squeeze(self.encoder_outputs_without_proj[:, 0:1, :], axis=1)
+    return tf.stop_gradient(tf.squeeze(self.encoder_outputs_without_proj[:, 0:1, :], axis=1))
+    # if self.is_training:
+    #   return tf.reduce_mean(self.encoder_outputs_without_proj, axis=1)
+    # return tf.stop_gradient(tf.reduce_mean(self.encoder_outputs_without_proj, axis=1))
 
   def get_sequence_output(self):
     """Gets final hidden layer of encoder.
@@ -241,10 +250,19 @@ class BertModel(object):
       float Tensor of shape [batch_size, seq_length, hidden_size] corresponding
       to the final hidden of the transformer encoder.
     """
-    return self.sequence_output
+    if self.is_training:
+      return self.sequence_output
+    return tf.stop_gradient(self.sequence_output)
 
-  def get_all_encoder_layers(self):
-    return self.all_encoder_layers
+  def encoder_outputs_without_proj(self):
+      """
+
+      :return: encoder output
+      """
+      return tf.stop_gradient(self.encoder_outputs_without_proj)
+
+  # def get_all_encoder_layers(self):
+  #   return self.all_encoder_layers
 
   def get_embedding_output(self):
     """Gets output of the embedding lookup (i.e., input to the transformer).
@@ -361,7 +379,7 @@ def dropout(input_tensor, dropout_prob):
 
 def layer_norm(input_tensor, name=None):
   """Run layer normalization on the last dimension of the tensor."""
-  layer = tf.keras.layers.LayerNormalization(axis=-1)
+  layer = tf.keras.layers.LayerNormalization(axis=-1, name=name)
   return layer(input_tensor)
   # return tf.keras.layers.LayerNormalization(
   #     inputs=input_tensor, begin_norm_axis=-1, begin_params_axis=-1, scope=name)
@@ -519,7 +537,7 @@ def embedding_postprocessor(input_tensor,
                                        position_broadcast_shape)
       output += position_embeddings
 
-  output = layer_norm_and_dropout(output, dropout_prob)
+  output = layer_norm_and_dropout(output, dropout_prob, "beta")
   return output
 
 

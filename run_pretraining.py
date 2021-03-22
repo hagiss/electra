@@ -22,9 +22,10 @@ from __future__ import print_function
 import argparse
 import collections
 import json
+import sys
 
-import tensorflow as tf2
 import tensorflow.compat.v1 as tf
+from tensorflow.keras.backend import eval
 
 import configure_pretraining
 from model import modeling
@@ -62,14 +63,16 @@ class PretrainingModel(object):
             config=self._bert_config,
             is_training=is_training,
             input_ids=masked_inputs.input_ids,
-            input_mask=masked_inputs.input_mask
-        )
+            input_mask=masked_inputs.input_mask,
+            scope="online")
+
         target = modeling_pred.BertModel(
             config=self._bert_config,
-            is_training=is_training,
+            is_training=False,
             input_ids=masked_inputs2.input_ids,
-            input_mask=masked_inputs2.input_mask
-        )
+            input_mask=masked_inputs2.input_mask,
+            scope="target")
+
         # mlm_output = self._get_masked_lm_output(masked_inputs, generator)
         loss1 = get_BYOL_output(self._bert_config,
                                 online.get_sequence_output(),
@@ -83,6 +86,8 @@ class PretrainingModel(object):
         # self.total_loss = config.gen_weight * (
         #     cloze_output.loss if config.two_tower_generator else mlm_output.loss)
         self.total_loss = loss1 + loss2
+        self.online = online.variables
+        self.target = target.variables
 
         # Evaluation
         eval_fn_inputs = {
@@ -165,8 +170,6 @@ def gather_indexes(sequence_tensor, positions):
 
 
 def get_BYOL_output(bert_config, online_tensor, target_tensor, online_positions):
-    print(tf.shape(online_tensor))
-
     first_online_tensor = tf.squeeze(online_tensor[:, 0:1, :], axis=1)
     first_target_tensor = tf.squeeze(target_tensor[:, 0:1, :], axis=1)
     online_tensor = gather_indexes(online_tensor, online_positions)
@@ -185,8 +188,8 @@ def get_BYOL_output(bert_config, online_tensor, target_tensor, online_positions)
                 256,
                 kernel_initializer=modeling_pred.create_initializer(bert_config.initializer_range))
 
-        token_loss = tf.reduce_sum(prediction * target_tensor, axis=1)
-        token_loss = token_loss / (tf.norm(prediction, axis=1) * tf.norm(target_tensor, axis=1))
+        token_loss = tf.reduce_sum(prediction * target_tensor, axis=-1)
+        token_loss = token_loss / (tf.norm(prediction, axis=-1) * tf.norm(target_tensor, axis=-1))
         token_loss = tf.reduce_mean(2 - 2 * token_loss)
 
         with tf.variable_scope("BYOL_first_loss", reuse=tf.AUTO_REUSE):
@@ -293,7 +296,7 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
                 loss=model.total_loss,
                 train_op=train_op,
                 training_hooks=[training_utils.ETAHook(
-                    {} if config.use_tpu else dict(loss=model.total_loss),
+                    {} if config.use_tpu else dict(loss=model.total_loss, online=model.online, target=model.target),
                     config.num_train_steps, config.iterations_per_loop,
                     config.use_tpu)]
             )
@@ -376,7 +379,7 @@ def train_one_step(config: configure_pretraining.PretrainingConfig):
     model = PretrainingModel(config, features, True)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        utils.log(sess.run(model.total_loss))
+        utils.log(sess.run([model.total_loss, model.online, model.target]))
 
 
 def main():

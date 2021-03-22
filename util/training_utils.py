@@ -22,6 +22,7 @@ from __future__ import print_function
 import datetime
 import re
 import time
+import math
 import tensorflow.compat.v1 as tf
 
 from model import modeling
@@ -59,6 +60,16 @@ class ETAHook(tf.estimator.SessionRunHook):
     if self._start_step is None:
       self._start_step = self._global_step - (self._iterations_per_loop
                                               if self._on_tpu else 1)
+
+    if self._is_training:
+      tmp = math.cos(math.pi * self._global_step/self._n_steps)
+      p = 1-(1-0.996)*(tmp+1)/2
+      online_weights = run_values.results["online"]
+      target_weights = run_values.results["target"]
+      print(online_weights)
+      # run_values.results["target"].assign(online_weights*0.004 + target_weights*0.996)
+      print(p)
+
     self.log(run_values)
 
   def end(self, session):
@@ -80,7 +91,10 @@ class ETAHook(tf.estimator.SessionRunHook):
         (self._n_steps - step) * time_per_step)
     if run_values is not None:
       for tag, value in run_values.results.items():
-        msg += " - " + str(tag) + (": {:.4f}".format(value))
+        if str(tag) == "loss":
+          msg += " - " + str(tag) + (": {:.4f}\n".format(value))
+        # else:
+        #   msg += str(value.get_pooled_output[0][0:5])
     utils.log(msg)
 
 
